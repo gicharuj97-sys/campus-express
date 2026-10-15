@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Campus Express - Riders</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--k:#111827;--l:#A3E635;--g:#F3F4F6;--mu:#6b7280}
+*{box-sizing:border-box;margin:0;padding:0;font-family:"Plus Jakarta Sans","Segoe UI",Arial,sans-serif}
+body{background:var(--g);color:var(--k);min-height:100vh}
+header{background:var(--k);color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:20}
+header b{font-size:20px;font-weight:800} header b span{color:var(--l)}
+.wrap{max-width:720px;margin:auto;padding:16px}
+.box{background:#fff;border-radius:18px;padding:18px;margin-bottom:14px}
+input,select{width:100%;padding:13px;margin:6px 0;border:1px solid #d1d5db;border-radius:10px;font-size:16px;background:#fff}
+.btn{display:inline-block;text-decoration:none;background:var(--l);color:var(--k);padding:13px 20px;border-radius:12px;margin:5px 8px 5px 0;font-weight:700;border:none;cursor:pointer;font-size:15px}
+.btn.dk{background:var(--k);color:#fff} .btn.wa{background:#25d366;color:#fff}
+.pill{display:inline-block;background:var(--l);color:var(--k);padding:5px 12px;border-radius:20px;font-weight:800;font-size:13px}
+.pill.on{background:var(--k);color:var(--l)} .pill.red{background:#b91c1c;color:#fff}
+.code{font-size:26px;font-weight:800;letter-spacing:2px}
+pre{white-space:pre-wrap;background:var(--g);border-radius:10px;padding:10px;margin:8px 0;font-size:15px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+small{color:var(--mu)} h2{margin:6px 0 12px;font-size:22px}
+#app{display:none}
+</style>
+</head>
+<body>
+<header><b>Campus<span>Express</span> Riders</b><span id="who"></span></header>
+<div class="wrap">
+
+<div class="box" id="login">
+  <h2>Rider login</h2>
+  <select id="rSel"><option value="josep">Josep</option><option value="chris">Chris</option></select>
+  <input id="rPin" type="password" inputmode="numeric" placeholder="Rider PIN">
+  <button class="btn" onclick="login()">Open rider page</button>
+  <p id="lMsg" style="color:#b91c1c"></p>
+</div>
+
+<div id="app">
+  <div class="box row"><span id="shareState" class="pill red">Location sharing: OFF</span><button class="btn dk" onclick="logout()">Log out</button></div>
+  <h2>Orders</h2>
+  <div id="list"><small>Loading orders...</small></div>
+</div>
+
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script>
+/* ===== 1. RIDERS AND PIN (change the PIN!) ===== */
+const RIDERS = {josep:"Josep", chris:"Chris"};
+const RIDER_PIN = "1234";
+
+/* ===== 2. FIREBASE (same as the customer website) ===== */
+const firebaseConfig = {
+  apiKey: "AIzaSyDKSQnn_88v4wrSHfTBAhkQaGcGfg3j1l8",
+  authDomain: "campus-express-30319.firebaseapp.com",
+  databaseURL: "https://campus-express-30319-default-rtdb.firebaseio.com",
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let me = localStorage.getItem("ce_rider") || "", orders = {}, watchId = null, seen = null, ref = null;
+
+function login(){
+  const k = $("rSel").value;
+  if ($("rPin").value.trim() !== RIDER_PIN){ $("lMsg").textContent = "Wrong PIN."; return; }
+  me = k; localStorage.setItem("ce_rider", k); start();
+}
+function logout(){ stopShare(); localStorage.removeItem("ce_rider"); me = ""; if (ref) ref.off(); location.reload(); }
+
+function start(){
+  $("login").style.display = "none"; $("app").style.display = "block";
+  $("who").textContent = "Hi, " + RIDERS[me];
+  ref = db.ref("orders").orderByChild("t").limitToLast(40);
+  ref.on("value", s => {
+    orders = s.val() || {};
+    const waiting = Object.keys(orders).filter(c => orders[c].status === "waiting");
+    if (seen !== null && waiting.some(c => !seen.includes(c))){
+      if (navigator.vibrate) navigator.vibrate([300,150,300]);
+      document.title = "NEW ORDER - Riders";
+    }
+    seen = waiting; draw();
+  });
+  if (Object.values(orders).some(o => o.rider === me && o.status === "onway")) startShare();
+}
+
+function ago(t){ const m = Math.round((Date.now() - t)/60000); return m < 1 ? "just now" : m < 60 ? m + " min ago" : Math.round(m/60) + " h ago"; }
+
+function draw(){
+  const codes = Object.keys(orders).filter(c => orders[c].status !== "delivered").sort((a,b) => orders[a].t - orders[b].t);
+  if (!codes.length){ $("list").innerHTML = '<div class="box"><small>No open orders right now.</small></div>'; return; }
+  $("list").innerHTML = codes.map(c => {
+    const o = orders[c], mine = o.rider === me, taken = o.status === "onway";
+    const phone = String(o.phone || "").replace(/[^0-9]/g, "");
+    const wa = phone.replace(/^0/, "254");
+    const alc = /beer|vodka|wine|whisky|whiskey|gin|tusker|liquor|alcohol|brandy|lager|cider/i.test(o.list || "");
+    let act = "";
+    if (!taken) act = '<select id="eta-' + c + '"><option value="10">I arrive in 10 min</option><option value="15">15 min</option><option value="20" selected>20 min</option><option value="30">30 min</option><option value="45">45 min</option></select>' +
+                      '<button class="btn" onclick="take(\'' + c + '\')">Take this order</button>';
+    else if (mine) act = '<button class="btn" onclick="done(\'' + c + '\')">Delivered ✅</button>';
+    else act = '<small>Taken by ' + esc(RIDERS[o.rider] || o.rider) + '</small>';
+    return '<div class="box"><div class="row"><span class="code">' + esc(c) + '</span><span class="pill ' + (taken ? "on" : "") + '">' + (taken ? "On the way" : "Waiting") + '</span></div>' +
+      '<small>' + ago(o.t) + '</small>' +
+      '<p style="margin-top:8px"><b>' + esc(o.name) + '</b> · ' + esc(o.phone) + '</p>' +
+      '<pre>' + esc(o.list) + '</pre>' +
+      '<p><b>From:</b> ' + esc(o.from) + '<br><b>To:</b> ' + esc(o.to) + '</p>' +
+      '<p><b>Our fee: KES ' + esc(o.price) + '</b> · ' + esc(o.pay) + '</p>' +
+      (alc ? '<p class="pill red">ALCOHOL: CHECK ID AT THE DOOR</p>' : '') +
+      '<div style="margin-top:8px"><a class="btn dk" href="tel:+' + wa + '">📞 Call</a><a class="btn wa" target="_blank" href="https://wa.me/' + wa + '">WhatsApp</a>' +
+      (o.lat ? '<a class="btn dk" target="_blank" href="https://maps.google.com/?q=' + o.lat + ',' + o.lng + '">📍 Map</a>' : '') + '</div>' +
+      '<div>' + act + '</div></div>';
+  }).join("");
+}
+
+function take(c){
+  const m = parseInt($("eta-" + c).value, 10) || 20;
+  db.ref("orders/" + c).update({status:"onway", rider:me, etaAt:Date.now() + m*60000});
+  db.ref("queue/" + c).update({s:"onway"});
+  startShare();
+}
+function done(c){
+  db.ref("orders/" + c).update({status:"delivered"});
+  db.ref("queue/" + c).update({s:"delivered"});
+  setTimeout(() => { if (!Object.values(orders).some(o => o.rider === me && o.status === "onway")) stopShare(); }, 800);
+}
+
+function startShare(){
+  if (watchId !== null || !navigator.geolocation) return;
+  watchId = navigator.geolocation.watchPosition(p => {
+    db.ref("riders/" + me).set({lat:p.coords.latitude, lng:p.coords.longitude, t:Date.now()});
+    $("shareState").textContent = "Location sharing: ON"; $("shareState").className = "pill on";
+  }, () => { $("shareState").textContent = "Location sharing: blocked (turn on GPS)"; }, {enableHighAccuracy:true, maximumAge:5000});
+}
+function stopShare(){
+  if (watchId !== null){ navigator.geolocation.clearWatch(watchId); watchId = null; }
+  $("shareState").textContent = "Location sharing: OFF"; $("shareState").className = "pill red";
+}
+
+document.addEventListener("visibilitychange", () => { if (!document.hidden) document.title = "Campus Express - Riders"; });
+setInterval(draw, 60000);
+if (me && RIDERS[me]) start();
+</script>
+</body>
+</html>
